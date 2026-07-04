@@ -1,26 +1,47 @@
 @import "tailwindcss";
 
+/*
+ * Comic Avails — dark, data-dense theme.
+ * Forced dark (this is a shop-floor tool used on a phone); not tied to the OS
+ * color scheme.
+ */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #09090b; /* zinc-950-ish */
+  --surface: #101013;
+  --surface-2: #17171b;
+  --border: #26262b;
+  --foreground: #ededef;
+  --muted: #a1a1aa; /* zinc-400 */
+  --accent: #f59e0b; /* amber-500 — the FOC/urgency accent */
 }
 
 @theme inline {
   --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
   --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  color-scheme: dark;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
+
+/* Tabular numbers for prices/dates/counts so columns line up. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Print styles are added later (Part 4.2); keep the app dark on screen. */
