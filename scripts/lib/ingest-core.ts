@@ -35,7 +35,11 @@ import * as cheerio from "cheerio";
 // Config
 // ---------------------------------------------------------------------------
 const MODEL = "claude-sonnet-4-6";
-const CHUNK_CHARS = 40_000; // ~10-12k tokens of article text per extraction call
+// Single-pass for typical solicit pages (~85k chars ≈ 21k input tokens). Kept
+// large on purpose: some publishers (Marvel and other PRH titles) give dates as
+// SHARED SECTION HEADERS that apply to the titles beneath them, so a product and
+// its date must stay in the same extraction call. Only very large pages chunk.
+const CHUNK_CHARS = 100_000;
 
 const VALID_FORMATS = [
   "single_issue",
@@ -158,8 +162,21 @@ Field rules:
 - writers / artists / cover_artists: arrays of full creator names ([] if none).
 - solicit_text: the descriptive solicitation paragraph ("" if none).
 
-Extract only real solicited products. Ignore navigation, ads, headers, editorial
-commentary, and reader comments.
+IMPORTANT — shared date headers: some pages do NOT print a date next to each
+product. Instead a HEADER LINE states the dates for every product listed beneath
+it, until the next such header. Headers look like:
+    "FOC 08/31/26, ON-SALE 10/14/26"
+    "ON SALE 10/14/26"
+    "FOC 08/03/26"
+When you see one, apply its dates to EACH product that follows it (street_date
+from the ON-SALE/ON SALE date, foc_date from the FOC date) until a new header
+appears. Inline "(ON SALE 10/14/26)" annotations attach to that one product.
+Dates are printed as M/D/YY or MM/DD/YY — interpret the 2-digit year as 20YY and
+output YYYY-MM-DD.
+
+Extract only real solicited products. Ignore navigation, ads, page headers/menus,
+editorial commentary, and reader comments (but the dated section headers above
+are NOT "headers" to ignore — use them for dates).
 
 Return ONLY the JSON object matching the schema. No prose, no markdown, no
 code fences.`;
