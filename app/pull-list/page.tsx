@@ -63,7 +63,7 @@ export default async function PullListPage() {
       ) : totalTitles === 0 ? (
         <EmptyState
           title="Your pull list is empty"
-          hint="Browse This Week's FOC or the weekly view and tap “+ Add” on any title."
+          hint="Browse Upcoming Releases or the weekly view and tap “+ Add” on any title."
         />
       ) : (
         groups.map((group) => (

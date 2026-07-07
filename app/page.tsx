@@ -1,4 +1,9 @@
-import { getFocThisWeek, getPublishers, type CatalogFilters } from "@/lib/catalog";
+import Link from "next/link";
+import {
+  getUpcomingReleases,
+  getPublishers,
+  type CatalogFilters,
+} from "@/lib/catalog";
 import { getPullListItemIds } from "@/lib/pull-list";
 import { Filters } from "@/components/Filters";
 import { DateSection } from "@/components/DateSection";
@@ -29,19 +34,22 @@ export default async function Home({
   const sp = await searchParams;
   const filters = parseFilters(sp);
 
-  const [publishers, foc, addedIds] = await Promise.all([
+  const [publishers, upcoming, addedIds] = await Promise.all([
     getPublishers(),
-    getFocThisWeek(filters),
+    getUpcomingReleases(filters),
     getPullListItemIds(),
   ]);
+
+  const laterCount = upcoming.total - upcoming.count;
 
   return (
     <div className="py-4">
       <div className="mb-3">
-        <h1 className="text-xl font-semibold tracking-tight">This Week&apos;s FOC</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Upcoming Releases</h1>
         <p className="text-sm text-muted">
-          Order-by deadlines in the next 7 days
-          {foc.count ? ` · ${foc.count} titles` : ""}
+          Soonest on-sale dates
+          {upcoming.count ? ` · ${upcoming.count} titles` : ""}
+          {laterCount > 0 ? ` · ${laterCount} more later` : ""}
         </p>
       </div>
 
@@ -49,24 +57,37 @@ export default async function Home({
         publishers={publishers.map((p) => ({ slug: p.slug, name: p.name }))}
       />
 
-      {foc.buckets.length ? (
-        foc.buckets.map((bucket) => (
-          <DateSection
-            key={bucket.date}
-            bucket={bucket}
-            kind="foc"
-            addedIds={addedIds}
-          />
-        ))
+      {upcoming.buckets.length ? (
+        <>
+          {upcoming.buckets.map((bucket) => (
+            <DateSection
+              key={bucket.date}
+              bucket={bucket}
+              kind="street"
+              showRowFoc={false}
+              addedIds={addedIds}
+            />
+          ))}
+          {upcoming.hiddenDates > 0 && (
+            <div className="pt-1 text-center text-sm">
+              <Link
+                href="/week"
+                className="inline-block rounded-md px-3 py-1.5 text-accent ring-1 ring-border hover:bg-surface-2"
+              >
+                Browse all releases by week →
+              </Link>
+            </div>
+          )}
+        </>
       ) : (
         <EmptyState
-          title="No FOC deadlines in the next 7 days"
+          title="No upcoming releases"
           hint={
-            foc.error
+            upcoming.error
               ? "Couldn't reach the catalog — check that the migration is applied and Supabase env vars are set."
-              : "Nothing is due to be ordered this week. Run an ingest to populate upcoming solicitations, or check the weekly view."
+              : "Nothing is solicited for an upcoming on-sale date. Run an ingest to populate solicitations, or check the weekly view."
           }
-          error={foc.error}
+          error={upcoming.error}
         />
       )}
     </div>

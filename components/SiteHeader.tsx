@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const NAV = [
-  { href: "/", label: "This Week's FOC", match: (p: string) => p === "/" },
+  { href: "/", label: "Upcoming", match: (p: string) => p === "/" },
   { href: "/week", label: "By Week", match: (p: string) => p.startsWith("/week") },
   {
     href: "/pull-list",

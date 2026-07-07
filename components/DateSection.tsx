@@ -8,15 +8,19 @@ import { formatDateLong } from "@/lib/format";
  * sub-groups. `kind` picks the header treatment:
  *  - "foc": the date header carries the FOC countdown badge; rows omit it.
  *  - "street": rows show their own FOC badge (useful on the weekly view).
+ * `showRowFoc` overrides the per-row FOC badge — pass false on street views
+ * where FOC data is unavailable (avoids a wall of "FOC TBD" badges).
  */
 export function DateSection({
   bucket,
   kind,
   addedIds,
+  showRowFoc = kind === "street",
 }: {
   bucket: DateBucket;
   kind: "foc" | "street";
   addedIds: Set<number>;
+  showRowFoc?: boolean;
 }) {
   const count = bucket.publishers.reduce((n, p) => n + p.groups.length, 0);
   return (
@@ -45,7 +49,7 @@ export function DateSection({
                 key={g.key}
                 group={g}
                 addedIds={addedIds}
-                showFoc={kind === "street"}
+                showFoc={showRowFoc}
               />
             ))}
           </ul>

@@ -224,7 +224,10 @@ function countGroups(buckets: DateBucket[]): number {
   return n;
 }
 
-/** Default view: items whose FOC date is within the next 7 days. */
+/** Default view: items whose FOC date is within the next 7 days.
+ *  Retained for when a FOC-publishing source is added; the landing page uses
+ *  getUpcomingReleases (street-date-forward) because current solicit sources
+ *  publish on-sale dates, not FOC. */
 export async function getFocThisWeek(
   filters: CatalogFilters,
   now: Date = new Date(),
@@ -239,6 +242,42 @@ export async function getFocThisWeek(
   );
   const buckets = buildDateView(items, "foc_date");
   return { buckets, count: countGroups(buckets), error };
+}
+
+/** Landing view: the soonest upcoming releases by on-sale (street) date.
+ *  Solicit sources publish on-sale dates, not per-product FOC dates, so the
+ *  landing page is street-date-forward. Returns the earliest `maxDates`
+ *  distinct upcoming street-date days from today onward, plus the total count
+ *  of upcoming titles so the page can say "…N more later". */
+export async function getUpcomingReleases(
+  filters: CatalogFilters,
+  opts: { maxDates?: number } = {},
+  now: Date = new Date(),
+): Promise<{
+  buckets: DateBucket[];
+  count: number;
+  total: number;
+  hiddenDates: number;
+  error?: string;
+}> {
+  const start = todayISO(now);
+  const end = addDaysISO(start, 540); // wide horizon; capped by date count below
+  const { items, error } = await fetchItemsInRange(
+    "street_date",
+    start,
+    end,
+    filters,
+  );
+  const all = buildDateView(items, "street_date");
+  const maxDates = opts.maxDates ?? 6;
+  const buckets = all.slice(0, maxDates);
+  return {
+    buckets,
+    count: countGroups(buckets),
+    total: countGroups(all),
+    hiddenDates: Math.max(0, all.length - buckets.length),
+    error,
+  };
 }
 
 /** Secondary view: releases whose street date falls in the given Mon–Sun week. */

@@ -14,9 +14,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Comic Avails — This Week's FOC",
+  title: "Comic Avails — Upcoming Releases",
   description:
-    "Upcoming comic solicitations across publishers, surfaced by Final Order Cutoff (FOC) deadline. Build a pull list your shop can order from.",
+    "Upcoming comic solicitations across publishers, surfaced by on-sale date. Build a pull list your shop can order from.",
 };
 
 export default function RootLayout({
