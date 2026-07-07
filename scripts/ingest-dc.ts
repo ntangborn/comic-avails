@@ -332,9 +332,13 @@ function validate(item: ExtractedItem): string[] {
 
   const foc = parseISODate(item.foc_date);
   const street = parseISODate(item.street_date);
-  if (!foc) reasons.push(`foc_date does not parse: ${JSON.stringify(item.foc_date)}`);
+  // street_date (on-sale) is the required anchor: solicit sources publish on-sale
+  // dates, not per-product FOC dates. foc_date is optional (D4) — only reject a
+  // non-null value that fails to parse; a genuine null is accepted.
   if (!street)
     reasons.push(`street_date does not parse: ${JSON.stringify(item.street_date)}`);
+  if (item.foc_date != null && !foc)
+    reasons.push(`foc_date present but does not parse: ${JSON.stringify(item.foc_date)}`);
   if (foc && street && foc.getTime() >= street.getTime()) {
     reasons.push(
       `foc_date (${item.foc_date}) is not before street_date (${item.street_date})`,
