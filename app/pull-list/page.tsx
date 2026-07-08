@@ -2,7 +2,6 @@ import Link from "next/link";
 import { getPullListLines } from "@/lib/pull-list";
 import { pullListConfigured } from "@/lib/supabase/server";
 import { CoverThumb } from "@/components/CoverThumb";
-import { FocBadge } from "@/components/FocBadge";
 import { QtyStepper } from "@/components/QtyStepper";
 import { RemoveButton } from "@/components/RemoveButton";
 import { EmptyState } from "@/components/EmptyState";
@@ -16,16 +15,18 @@ import {
 
 export const dynamic = "force-dynamic";
 
-function groupByFoc(lines: PullListLine[]): { date: string | null; lines: PullListLine[] }[] {
+// Group by on-sale (street) date — the anchor every item has — to match the
+// landing page and the printout (FOC is populated for only some publishers).
+function groupByStreet(lines: PullListLine[]): { date: string | null; lines: PullListLine[] }[] {
   const map = new Map<string, PullListLine[]>();
   for (const line of lines) {
-    const key = line.item.foc_date ?? "";
+    const key = line.item.street_date ?? "";
     const arr = map.get(key);
     if (arr) arr.push(line);
     else map.set(key, [line]);
   }
   const keys = [...map.keys()].sort((a, b) => {
-    if (a === "") return 1; // null FOC last
+    if (a === "") return 1; // null date last
     if (b === "") return -1;
     return a.localeCompare(b);
   });
@@ -38,7 +39,7 @@ export default async function PullListPage() {
 
   const totalTitles = lines.length;
   const totalQty = lines.reduce((n, l) => n + l.qty, 0);
-  const groups = groupByFoc(lines);
+  const groups = groupByStreet(lines);
 
   return (
     <div className="py-4">
@@ -50,9 +51,28 @@ export default async function PullListPage() {
             {totalQty === 1 ? "" : "s"}
           </p>
         </div>
-        <span className="rounded-md px-2.5 py-1.5 text-xs text-muted ring-1 ring-border">
-          Print / export — next (Part 4.2)
-        </span>
+        {configured && totalTitles > 0 && (
+          <div className="flex items-center gap-1.5">
+            <Link
+              href="/pull-list/print?auto=1"
+              className="rounded-md bg-accent px-3 py-1.5 text-sm font-semibold text-black hover:opacity-90"
+            >
+              Print
+            </Link>
+            <a
+              href="/pull-list/export/csv"
+              className="rounded-md px-2.5 py-1.5 text-sm text-muted ring-1 ring-border hover:text-foreground"
+            >
+              CSV
+            </a>
+            <a
+              href="/pull-list/export/pdf"
+              className="rounded-md px-2.5 py-1.5 text-sm text-muted ring-1 ring-border hover:text-foreground"
+            >
+              PDF
+            </a>
+          </div>
+        )}
       </div>
 
       {!configured ? (
@@ -70,9 +90,8 @@ export default async function PullListPage() {
           <section key={group.date ?? "no-foc"} className="mb-6">
             <div className="sticky top-[49px] z-10 -mx-3 flex items-center justify-between border-b border-border bg-background/95 px-3 py-2 backdrop-blur sm:-mx-5 sm:px-5">
               <h2 className="text-sm font-semibold">
-                {group.date ? formatDateLong(group.date) : "No FOC date"}
+                {group.date ? `On sale ${formatDateLong(group.date)}` : "On-sale date TBD"}
               </h2>
-              {group.date && <FocBadge foc={group.date} />}
             </div>
             <ul>
               {group.lines.map((line) => {

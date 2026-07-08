@@ -44,4 +44,32 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* Print styles are added later (Part 4.2); keep the app dark on screen. */
+/* ---------------------------------------------------------------------------
+ * Print (Part 4.2) — the pull-list print view is a black-on-white document.
+ * On screen it renders as a light "sheet" over the dark app; on paper the app
+ * chrome (site header, screen-only toolbar) is hidden and colors are forced B&W.
+ * ------------------------------------------------------------------------- */
+@media print {
+  /* Hide the global site header and anything flagged screen-only. */
+  body > header,
+  [data-noprint] {
+    display: none !important;
+  }
+  html,
+  body {
+    background: #fff !important;
+    color: #000 !important;
+    color-scheme: light !important;
+  }
+  main {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+  /* Keep a publisher's block from breaking awkwardly across pages when it fits. */
+  .print-avoid-break {
+    break-inside: avoid;
+  }
+  @page {
+    margin: 12mm;
+  }
+}
