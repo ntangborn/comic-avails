@@ -63,6 +63,11 @@ export interface ExtractedItem {
   artists: string[];
   cover_artists: string[];
   solicit_text: string;
+  /** Index into the page's ordered cover-image list ([IMG#N] markers), or null.
+   *  Resolved to a URL (cover_url) in code after extraction. */
+  cover_image_index: number | null;
+  /** Populated in code from cover_image_index; not provided by the model. */
+  cover_url?: string | null;
 }
 
 interface Reject {
@@ -115,6 +120,7 @@ const OUTPUT_SCHEMA = {
           artists: { type: "array", items: { type: "string" } },
           cover_artists: { type: "array", items: { type: "string" } },
           solicit_text: { type: "string" },
+          cover_image_index: { type: ["integer", "null"] },
         },
         required: [
           "series_name",
@@ -129,6 +135,7 @@ const OUTPUT_SCHEMA = {
           "artists",
           "cover_artists",
           "solicit_text",
+          "cover_image_index",
         ],
       },
     },
@@ -161,6 +168,12 @@ Field rules:
 - foc_date: Final Order Cutoff date as YYYY-MM-DD, or null if not stated.
 - writers / artists / cover_artists: arrays of full creator names ([] if none).
 - solicit_text: the descriptive solicitation paragraph ("" if none).
+- cover_image_index: the page's cover images appear inline as markers "[IMG#N]"
+  (N is a number) positioned next to the product they belong to. Set
+  cover_image_index to the N of THIS product's cover image. For a variant-cover
+  product, pick the [IMG#N] marker for that specific variant's art. Each marker
+  belongs to at most one product — do not reuse the same N for multiple products.
+  Use null if no image marker is clearly associated with this product.
 
 IMPORTANT — shared date headers: some pages do NOT print a date next to each
 product. Instead a HEADER LINE states the dates for every product listed beneath
@@ -208,9 +221,28 @@ export function requireEnv(name: string, ...fallbacks: string[]): string {
 }
 
 // ---------------------------------------------------------------------------
-// 1 + 2. Fetch and strip to article text
+// 1 + 2. Fetch and strip to article text (+ collect ordered cover images)
 // ---------------------------------------------------------------------------
-async function fetchArticleText(url: string): Promise<string> {
+
+/** Non-cover images to skip: site logo, CR-branded hero banners, spacers. */
+const IMG_DENY = /(asset-\d|covercr|-1400x600\.|\/logo|spacer|placeholder|avatar|gravatar)/i;
+
+/** Pick the real image URL from an <img>'s attrs, tolerating WP lazy-load. */
+function pickImgUrl(cands: Array<string | undefined>): string | null {
+  const u = (cands.find((c) => c && c.trim()) ?? "").trim();
+  if (!/^https?:\/\//i.test(u)) return null; // skip data: URIs / placeholders
+  if (!/\.(jpe?g|png|webp)(\?|$)/i.test(u)) return null;
+  if (IMG_DENY.test(u)) return null;
+  return u;
+}
+
+interface FetchedArticle {
+  text: string;
+  /** Cover-image URLs in document order; index === the [IMG#N] marker in `text`. */
+  images: string[];
+}
+
+async function fetchArticle(url: string): Promise<FetchedArticle> {
   const res = await fetch(url, {
     headers: { "user-agent": "comic-avails-ingest/1.0 (+solicit parser)" },
   });
@@ -220,38 +252,73 @@ async function fetchArticleText(url: string): Promise<string> {
   const html = await res.text();
   const $ = cheerio.load(html);
 
-  // Drop non-content elements entirely.
+  // Drop non-content elements. NOTE: keep <noscript> for now — this site's
+  // lazy-load plugin hides the real cover <img> inside <noscript> fallbacks, so
+  // the live DOM has almost no cover images. We mine those fallbacks below.
   $(
-    "script, style, noscript, nav, header, footer, aside, form, iframe, .comments, #comments",
+    "script, style, nav, header, footer, aside, form, iframe, .comments, #comments",
   ).remove();
 
-  // Prefer the main article container; fall back progressively.
-  const selectors = [".entry-content", "article", "main", "body"];
-  let text = "";
-  for (const sel of selectors) {
-    const node = $(sel).first();
-    if (node.length) {
-      const candidate = node.text();
-      if (candidate && candidate.trim().length > text.trim().length) {
-        text = candidate;
-      }
-      // .entry-content / article are strong signals — stop at the first hit.
-      if (sel === ".entry-content" || sel === "article") {
-        if (candidate.trim().length > 200) {
-          text = candidate;
-          break;
-        }
-      }
+  // Pick the main article container (strongest signal first, else the body).
+  let sel = "body";
+  for (const s of [".entry-content", "article", "main"]) {
+    if ($(s).first().text().trim().length > 200) {
+      sel = s;
+      break;
     }
   }
+  const container = $(sel).first();
 
-  // Collapse whitespace while preserving paragraph breaks (helps chunking).
-  return text
+  // Walk covers in document order — both real <img> and the <noscript> lazy
+  // fallbacks — replacing each with an [IMG#N] marker so the model can associate
+  // a product with its cover. Non-cover images are dropped.
+  const images: string[] = [];
+  container.find("noscript, img").each((_i, el) => {
+    // domhandler element name: "noscript" carries its inner <img> as raw text.
+    const name = (el as { name?: string }).name;
+    let u: string | null = null;
+    if (name === "noscript") {
+      const inner = $(el).html() || $(el).text() || "";
+      const m = inner.match(/<img[^>]*\bsrc=["']([^"']+)["']/i);
+      u = pickImgUrl([m?.[1]]);
+    } else {
+      u = pickImgUrl([
+        $(el).attr("data-lazy-src"),
+        $(el).attr("data-src"),
+        $(el).attr("src"),
+      ]);
+    }
+    if (!u) {
+      $(el).remove();
+      return;
+    }
+    const n = images.length;
+    images.push(u);
+    $(el).replaceWith(` [IMG#${n}] `);
+  });
+
+  // Remove any leftover noscript (non-image fallbacks like tracking pixels).
+  $("noscript").remove();
+
+  const text = container
+    .text()
     .replace(/\r/g, "")
     .replace(/[ \t]+/g, " ")
     .replace(/\n[ \t]*\n\s*/g, "\n\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+
+  return { text, images };
+}
+
+/** Resolve a validated item's cover_image_index to a URL from the page images. */
+function resolveCoverUrl(
+  item: ExtractedItem,
+  images: string[],
+): string | null {
+  const idx = item.cover_image_index;
+  if (idx == null || !Number.isInteger(idx)) return null;
+  return images[idx] ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -291,7 +358,10 @@ async function extractChunk(
 ): Promise<ExtractedItem[]> {
   const stream = client.messages.stream({
     model: MODEL,
-    max_tokens: 64_000,
+    // 128K is claude-sonnet-4-6's output ceiling; large solicit pages (DC ~283
+    // items) plus the cover_image_index field can exceed 64K. We already stream,
+    // which is required at this max_tokens.
+    max_tokens: 128_000,
     thinking: { type: "disabled" },
     output_config: { format: { type: "json_schema", schema: OUTPUT_SCHEMA } },
     system: extractionPrompt(publisher),
@@ -473,7 +543,7 @@ class Ingestor {
         ? item.cover_artists.join(", ")
         : null;
 
-    const row = {
+    const row: Record<string, unknown> = {
       series_id: seriesId,
       publisher_id: this.publisherId,
       title_raw: item.title_raw,
@@ -489,6 +559,10 @@ class Ingestor {
       source: this.sourceUrl,
       last_verified_at: new Date().toISOString(),
     };
+    // Only write cover_url when we have one, so a later run that fails to match
+    // a cover never clobbers a previously-captured URL with null (upsert only
+    // updates the columns present in `row`).
+    if (item.cover_url) row.cover_url = item.cover_url;
 
     const { data: upserted, error: upErr } = await this.db
       .from("items")
@@ -576,10 +650,12 @@ export async function runIngest(opts: IngestOptions): Promise<IngestResult> {
   const rejects: Reject[] = [];
 
   try {
-    // 1 + 2. Fetch + strip.
+    // 1 + 2. Fetch + strip (+ collect ordered cover images).
     console.log(`Fetching ${url} ...`);
-    const article = await fetchArticleText(url);
-    console.log(`Article text: ${article.length.toLocaleString()} chars`);
+    const { text: article, images } = await fetchArticle(url);
+    console.log(
+      `Article text: ${article.length.toLocaleString()} chars · ${images.length} cover image(s)`,
+    );
     if (!article) throw new Error("No article text extracted from page");
 
     // 3. Extract (chunk + merge).
@@ -597,6 +673,14 @@ export async function runIngest(opts: IngestOptions): Promise<IngestResult> {
     const merged = dedupeItems(all);
     extractedCount = merged.length;
     console.log(`Extracted ${all.length} raw, ${extractedCount} after de-dup.`);
+
+    // Resolve each item's cover image index -> URL.
+    let coverCount = 0;
+    for (const item of merged) {
+      item.cover_url = resolveCoverUrl(item, images);
+      if (item.cover_url) coverCount++;
+    }
+    console.log(`Covers matched: ${coverCount}/${extractedCount}`);
 
     // 4. Validate.
     const valid: ExtractedItem[] = [];
