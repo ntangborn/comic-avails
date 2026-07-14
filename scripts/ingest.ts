@@ -37,10 +37,15 @@ function listSources(): void {
 async function main(): Promise<void> {
   loadEnv();
 
-  const arg = process.argv[2];
-  if (!arg || arg === "--list" || arg === "-l") {
+  // --no-prune keeps stale rows (skip the post-upsert reconcile).
+  const argv = process.argv.slice(2);
+  const prune = !argv.includes("--no-prune");
+  const positional = argv.filter((a) => !a.startsWith("--"));
+
+  const arg = positional[0];
+  if (!arg || arg === "-l" || argv.includes("--list")) {
     if (!arg) {
-      console.error("Usage: npx tsx scripts/ingest.ts <slug> [url]\n");
+      console.error("Usage: npx tsx scripts/ingest.ts <slug> [url] [--no-prune]\n");
     }
     listSources();
     if (!arg) process.exitCode = 1;
@@ -57,8 +62,8 @@ async function main(): Promise<void> {
     return;
   }
 
-  const url = process.argv[3] ?? source.current.url;
-  if (!process.argv[3]) {
+  const url = positional[1] ?? source.current.url;
+  if (!positional[1]) {
     if (!source.current.verified) {
       console.warn(
         `⚠ Registry URL for '${slug}' is UNVERIFIED — confirm it resolves before trusting the run.`,
@@ -67,8 +72,14 @@ async function main(): Promise<void> {
     if (source.notes) console.log(`Note: ${source.notes}\n`);
     console.log(`Using registry URL (${source.current.month}):\n  ${url}\n`);
   }
+  if (!prune) console.log("(--no-prune: keeping stale rows)\n");
 
-  const result = await runIngest({ slug, publisher: source.publisher, url });
+  const result = await runIngest({
+    slug,
+    publisher: source.publisher,
+    url,
+    prune,
+  });
   printSummary(source.publisher, result);
 }
 

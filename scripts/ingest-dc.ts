@@ -20,12 +20,19 @@ async function main(): Promise<void> {
   const dc = sourceForSlug("dc");
   if (!dc) throw new Error("DC not found in the solicit source registry.");
 
-  const url = process.argv[2] ?? dc.current.url;
-  if (!process.argv[2]) {
+  const argv = process.argv.slice(2);
+  const prune = !argv.includes("--no-prune");
+  const url = argv.find((a) => !a.startsWith("--")) ?? dc.current.url;
+  if (url === dc.current.url) {
     console.log(`No URL argument given — using registry URL:\n  ${url}\n`);
   }
 
-  const result = await runIngest({ slug: "dc", publisher: dc.publisher, url });
+  const result = await runIngest({
+    slug: "dc",
+    publisher: dc.publisher,
+    url,
+    prune,
+  });
   printSummary(dc.publisher, result);
 }
 

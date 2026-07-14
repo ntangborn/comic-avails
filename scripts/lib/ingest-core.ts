@@ -82,6 +82,9 @@ export interface IngestOptions {
   publisher: string;
   /** The solicit-page URL to ingest. */
   url: string;
+  /** Reconcile after upsert: delete rows from this source not seen in this run
+   *  (protects rows on a pull list). Default true; pass false to keep stale rows. */
+  prune?: boolean;
   /** Optional injected Anthropic/Supabase clients (tests); built from env if absent. */
   anthropic?: Anthropic;
   db?: SupabaseClient;
@@ -93,6 +96,10 @@ export interface IngestResult {
   upserted: number;
   rejected: number;
   rejects: Reject[];
+  /** Rows deleted by the post-upsert reconcile (stale rows from prior runs). */
+  pruned: number;
+  /** Stale rows left in place because they're on a pull list. */
+  prunedSkipped: number;
 }
 
 // JSON Schema handed to the model via structured outputs. Wrapping the array in
@@ -319,6 +326,59 @@ function resolveCoverUrl(
   const idx = item.cover_image_index;
   if (idx == null || !Number.isInteger(idx)) return null;
   return images[idx] ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Reconcile — delete rows that this source produced before but not this run
+// ---------------------------------------------------------------------------
+/**
+ * A solicit page is the source of truth for its own products. Because extraction
+ * is non-deterministic (variant granularity varies run-to-run) and upsert never
+ * deletes, re-running a page accumulates orphaned rows. After a successful run we
+ * delete rows scoped to THIS source (publisher + source URL) that weren't in this
+ * run's keep-set — but never rows a user has on a pull list (that FK cascades, so
+ * deleting one would silently drop it from their list). Scoping by source URL
+ * means pruning one month's page never touches another month's rows.
+ */
+async function pruneStale(
+  db: SupabaseClient,
+  publisherId: number,
+  sourceUrl: string,
+  keepIds: Set<number>,
+): Promise<{ pruned: number; skipped: number }> {
+  const { data: existing, error: selErr } = await db
+    .from("items")
+    .select("id")
+    .eq("publisher_id", publisherId)
+    .eq("source", sourceUrl);
+  if (selErr) throw new Error(`prune lookup failed: ${selErr.message}`);
+
+  const staleIds = (existing ?? [])
+    .map((r: { id: number }) => r.id)
+    .filter((id: number) => !keepIds.has(id));
+  if (!staleIds.length) return { pruned: 0, skipped: 0 };
+
+  // Protect anything on a pull list — its FK cascades to pull_list_items.
+  const { data: pulled, error: pullErr } = await db
+    .from("pull_list_items")
+    .select("item_id")
+    .in("item_id", staleIds);
+  if (pullErr) throw new Error(`prune pull-list check failed: ${pullErr.message}`);
+  const pulledSet = new Set(
+    (pulled ?? []).map((r: { item_id: number }) => r.item_id),
+  );
+
+  const toDelete = staleIds.filter((id: number) => !pulledSet.has(id));
+
+  // Delete in chunks to keep the filter URL length bounded.
+  const CHUNK = 200;
+  for (let i = 0; i < toDelete.length; i += CHUNK) {
+    const batch = toDelete.slice(i, i + CHUNK);
+    const { error: delErr } = await db.from("items").delete().in("id", batch);
+    if (delErr) throw new Error(`prune delete failed: ${delErr.message}`);
+  }
+
+  return { pruned: toDelete.length, skipped: pulledSet.size };
 }
 
 // ---------------------------------------------------------------------------
@@ -647,7 +707,10 @@ export async function runIngest(opts: IngestOptions): Promise<IngestResult> {
 
   let extractedCount = 0;
   let upsertedCount = 0;
+  let prunedCount = 0;
+  let prunedSkipped = 0;
   const rejects: Reject[] = [];
+  const keepIds = new Set<number>();
 
   try {
     // 1 + 2. Fetch + strip (+ collect ordered cover images).
@@ -695,10 +758,26 @@ export async function runIngest(opts: IngestOptions): Promise<IngestResult> {
     const ingestor = new Ingestor(db, pub.id, url);
     for (const item of valid) {
       try {
-        await ingestor.upsertItem(item);
+        const id = await ingestor.upsertItem(item);
+        keepIds.add(id);
         upsertedCount++;
       } catch (e) {
         rejects.push({ item, reasons: [`db error: ${(e as Error).message}`] });
+      }
+    }
+
+    // 6. Reconcile — delete this source's rows that weren't seen this run.
+    // Guarded on upsertedCount > 0 so a run that fetched but extracted nothing
+    // never deletes the whole source. (A fetch failure throws before here.)
+    if (opts.prune !== false && upsertedCount > 0) {
+      const { pruned, skipped } = await pruneStale(db, pub.id, url, keepIds);
+      prunedCount = pruned;
+      prunedSkipped = skipped;
+      if (pruned || skipped) {
+        console.log(
+          `Pruned ${pruned} stale row(s)` +
+            (skipped ? ` · kept ${skipped} on a pull list` : ""),
+        );
       }
     }
 
@@ -714,6 +793,8 @@ export async function runIngest(opts: IngestOptions): Promise<IngestResult> {
           extracted: extractedCount,
           upserted: upsertedCount,
           rejected: rejects.length,
+          pruned: prunedCount,
+          pruned_skipped: prunedSkipped,
         },
       })
       .eq("id", runId);
@@ -736,6 +817,8 @@ export async function runIngest(opts: IngestOptions): Promise<IngestResult> {
     upserted: upsertedCount,
     rejected: rejects.length,
     rejects,
+    pruned: prunedCount,
+    prunedSkipped,
   };
 }
 
@@ -747,6 +830,10 @@ export function printSummary(publisher: string, result: IngestResult): void {
   console.log(`Extracted: ${result.extracted}`);
   console.log(`Upserted:  ${result.upserted}`);
   console.log(`Rejected:  ${result.rejected}`);
+  console.log(
+    `Pruned:    ${result.pruned}` +
+      (result.prunedSkipped ? ` (kept ${result.prunedSkipped} on a pull list)` : ""),
+  );
   if (result.rejects.length) {
     console.log("\n--- Rejected rows (NOT written to the database) ---");
     for (const r of result.rejects) {
