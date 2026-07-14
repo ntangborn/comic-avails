@@ -5,6 +5,10 @@ import type { CatalogItem } from "@/lib/types";
  * Cover thumbnail. Uses `cover_url` when present, otherwise a placeholder tile
  * with the publisher initial. Plain <img> (covers are arbitrary external URLs;
  * next/image remote patterns aren't configured yet).
+ *
+ * referrerPolicy="no-referrer": the cover host (comicreleases.com) hotlink-blocks
+ * with a 403 when a cross-origin Referer is present, but serves the image when
+ * none is sent. Omitting the Referer keeps the hotlinked covers loading.
  */
 export function CoverThumb({
   item,
@@ -21,6 +25,7 @@ export function CoverThumb({
         alt={item.title_raw}
         className={`${dims} shrink-0 rounded-sm object-cover ring-1 ring-border`}
         loading="lazy"
+        referrerPolicy="no-referrer"
       />
     );
   }
